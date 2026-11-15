@@ -13,3 +13,5 @@ Detects network attacks (DoS, Port Scan, Brute Force, etc.) using PyTorch + CUDA
 - notebooks/  → Jupyter notebooks
 - models/     → saved models
 - docs/       → documentation
+
+What is implemented so far, and how to run it, is in [docs/progress.md](docs/progress.md).

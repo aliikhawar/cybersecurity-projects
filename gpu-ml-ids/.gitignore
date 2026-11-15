@@ -3,6 +3,7 @@
 .env
 data/*.csv
 data/*.zip
+data/*.txt
 models/*.pth
 models/*.pt
 .ipynb_checkpoints/

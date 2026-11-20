@@ -28,3 +28,6 @@ LEARNING_RATE = 1e-3 # controls the step the model takes when adjusting internal
 SEED = 42 # A random number to insert in parameters to ensure reproducibility of results.
 
 
+CLASS_NAMES = [ "BENIGN", "Botnet" , "DoS/DDoS" , "Infiltration", "PortScan", "Web Attack" ] # class names for the CICIDS2017 dataset
+
+CLASS_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)} # mapping class names to indices

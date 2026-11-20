@@ -7,3 +7,9 @@ data/*.txt
 models/*.pth
 models/*.pt
 .ipynb_checkpoints/
+
+# Ignore datasets, model weights, and Word temp files
+data/
+*.csv
+models/*.pth
+~$*.docx

@@ -56,3 +56,39 @@ if __name__ == "__main__":
     # Example usage of the map_cicids_label function
     print(f"CUDA ready: {torch.cuda.is_available()} | Dataset folder exists: {CICIDS_DIR.exists()}")
     print("Sample label check -> 'DDoS' maps to class ID:", map_cicids_label("DDoS"))
+
+def load_csv_chunks(data_dir: Path):
+    """Stream-load all CICIDS2017 CSVs into clean, compact float32 NumPy chunks."""
+    csv_files = sorted(data_dir.rglob("*.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in {data_dir}")
+
+    print(f"[INFO] Found {len(csv_files)} CSV files in {data_dir}")
+    X_chunks, y_chunks = [], []
+    feature_cols = None
+
+    for fpath in csv_files:
+        print(f"  Loading & cleaning {fpath.name} ...")
+        df = pd.read_csv(fpath, encoding="latin1", low_memory=True)
+        df.columns = df.columns.str.strip()  # remove leading spaces in headers
+
+        label_col = next(c for c in df.columns if c.lower() == "label")
+        y_chunk = df[label_col].map(map_cicids_label).to_numpy(dtype=np.int64)
+        df.drop(columns=[label_col], inplace=True)
+
+        # Lock the exact same numeric feature columns across all 8 files
+        if feature_cols is None:
+            feature_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+        # Convert to float32 immediately (uses half the RAM of float64)
+        X_chunk = df[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+        del df
+
+        # Keep only rows with finite numbers (drops NaN and +/- Infinity)
+        valid_mask = np.isfinite(X_chunk).all(axis=1)
+        X_chunks.append(X_chunk[valid_mask])
+        y_chunks.append(y_chunk[valid_mask])
+        del X_chunk, y_chunk
+        gc.collect()
+
+    return X_chunks, y_chunks

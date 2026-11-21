@@ -175,4 +175,115 @@ class DeepResIDSNet(nn.Module):
         h = self.res2(h)
         return self.head(h)
 
-    
+
+
+def sync(device: torch.device):
+    """Wait for all queued CUDA GPU kernels to finish before reading the timer."""
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+
+
+def train_and_benchmark(
+    device_name: str,
+    X_train: torch.Tensor,
+    y_train: torch.Tensor,
+    X_test: torch.Tensor,
+    y_test: torch.Tensor,
+):
+    """Train and evaluate DeepResIDSNet on 'cuda' or 'cpu' with exact hardware timing."""
+    torch.manual_seed(SEED)
+    device = torch.device(device_name)
+    num_samples, input_dim = X_train.shape
+
+    model = DeepResIDSNet(input_dim, len(CLASS_NAMES), width=512).to(device)
+    param_count = sum(p.numel() for p in model.parameters())
+
+    print("=======================================================")
+    print(f" Running DeepResIDSNet ({param_count:,} params) on {device_name.upper()}")
+    if device.type == "cuda":
+        print(f" Hardware: {torch.cuda.get_device_name(0)}")
+    print(f" Batch Size: {BATCH_SIZE} | Epochs: {EPOCHS}")
+    print("=======================================================")
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+
+    # Keep full float32 tensors on the target device (~700 MB fits easily in 6 GB VRAM)
+    X_tr_dev = X_train.to(device)
+    y_tr_dev = y_train.to(device)
+    X_te_dev = X_test.to(device)
+
+    # Warm-up pass so CUDA context initialization isn't counted in epoch 1
+    if device.type == "cuda":
+        _ = model(X_tr_dev[:BATCH_SIZE])
+        sync(device)
+
+    # 1. Timed Training Loop
+    model.train()
+    sync(device)
+    t_start = time.perf_counter()
+
+    for epoch in range(1, EPOCHS + 1):
+        ep_start = time.perf_counter()
+        perm = torch.randperm(num_samples, device=device)
+        epoch_loss = 0.0
+
+        for start in range(0, num_samples, BATCH_SIZE):
+            idx = perm[start : start + BATCH_SIZE]
+            bx, by = X_tr_dev[idx], y_tr_dev[idx]
+
+            optimizer.zero_grad()
+            loss = criterion(model(bx), by)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * bx.size(0)
+
+        sync(device)
+        ep_sec = time.perf_counter() - ep_start
+        elapsed = time.perf_counter() - t_start
+        print(f"  epoch {epoch:2d}/{EPOCHS} | loss {epoch_loss / num_samples:.4f} | epoch: {ep_sec:5.2f}s | elapsed: {elapsed:6.1f}s")
+
+    sync(device)
+    train_seconds = time.perf_counter() - t_start
+
+    # 2. Timed Inference (Intrusion Detection on unseen test flows)
+    model.eval()
+    preds_list = []
+    sync(device)
+    i_start = time.perf_counter()
+
+    with torch.no_grad():
+        for start in range(0, len(X_te_dev), BATCH_SIZE * 2):
+            logits = model(X_te_dev[start : start + BATCH_SIZE * 2])
+            preds_list.append(torch.argmax(logits, dim=1))
+
+    sync(device)
+    infer_seconds = time.perf_counter() - i_start
+
+    y_pred = torch.cat(preds_list).cpu()
+    overall_acc = float((y_pred == y_test).float().mean().item()) * 100.0
+    throughput = len(y_test) / max(infer_seconds, 1e-6)
+
+    print(f"  -> Train time     : {train_seconds:.2f} s ({train_seconds / 60:.2f} min)")
+    print(f"  -> Inference time : {infer_seconds:.4f} s ({throughput:,.0f} flows/sec)")
+    print(f"  -> Test accuracy  : {overall_acc:.2f}%")
+    for idx, cname in enumerate(CLASS_NAMES):
+        mask = y_test == idx
+        cnt = int(mask.sum().item())
+        if cnt > 0:
+            c_acc = float((y_pred[mask] == y_test[mask]).float().mean().item()) * 100.0
+            print(f"       {cname:<12s}: {c_acc:6.2f}% ({cnt:,} rows)")
+    print()
+
+    del X_tr_dev, y_tr_dev, X_te_dev
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    return {
+        "model": model,
+        "params": param_count,
+        "train_seconds": train_seconds,
+        "infer_seconds": infer_seconds,
+        "throughput": throughput,
+        "accuracy": overall_acc,
+    }

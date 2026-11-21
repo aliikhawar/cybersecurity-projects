@@ -14,6 +14,7 @@ import torch # for deep learning and GPU acceleration
 import torch.nn as nn # for building neural networks. it is a pytorch module containing all the building blocks for neural networks
 from sklearn.model_selection import train_test_split  # splits data into train and test sets
 from sklearn.preprocessing import StandardScaler  # normalizes features to mean=0, std=1
+import matplotlib.pyplot as plt  # for generating GPU vs CPU speedup charts
 
 
 # Listing folder paths from src/final_ids/final_ids.py to gpu-ml-ids/
@@ -287,3 +288,68 @@ def train_and_benchmark(
         "throughput": throughput,
         "accuracy": overall_acc,
     }
+
+def save_chart(gpu_res: dict, cpu_res: dict, out_path: Path):
+    """Save a side-by-side GPU vs. CPU training time and inference throughput chart."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.5))
+
+    devices = ["GPU\n(GTX 1660 Super)", "CPU\n(Ryzen 5 3600)"]
+
+    # Left subplot: Training time (lower is better)
+    bars1 = axes[0].bar(devices, [gpu_res["train_seconds"], cpu_res["train_seconds"]], color=["#10B981", "#64748B"], width=0.48)
+    axes[0].set_title("DeepResIDSNet Training Time (Lower is Better)")
+    axes[0].set_ylabel("Seconds (s)")
+    for b in bars1:
+        h = b.get_height()
+        axes[0].text(b.get_x() + b.get_width() / 2, h * 1.02, f"{h:.1f}s", ha="center", fontweight="bold")
+
+    # Right subplot: Inference throughput (higher is better)
+    bars2 = axes[1].bar(devices, [gpu_res["throughput"] / 1e6, cpu_res["throughput"] / 1e6], color=["#2563EB", "#64748B"], width=0.48)
+    axes[1].set_title("Inference Throughput (Millions of Flows/sec)")
+    axes[1].set_ylabel("Million Flows / sec")
+    for b in bars2:
+        h = b.get_height()
+        axes[1].text(b.get_x() + b.get_width() / 2, h * 1.02, f"{h:.2f}M/s", ha="center", fontweight="bold")
+
+    speedup = cpu_res["train_seconds"] / gpu_res["train_seconds"]
+    fig.suptitle(f"CICIDS2017 DeepResIDSNet ({gpu_res['params']:,} Params) — {speedup:.2f}x GPU Speedup", fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"[INFO] Saved benchmark chart to {out_path}")
+
+
+def main():
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    X_train, y_train, X_test, y_test = prepare_datasets(CICIDS_DIR)
+
+    gpu_res = train_and_benchmark("cuda", X_train, y_train, X_test, y_test) if torch.cuda.is_available() else None
+    cpu_res = train_and_benchmark("cpu", X_train, y_train, X_test, y_test)
+
+    if gpu_res is not None:
+        train_speedup = cpu_res["train_seconds"] / gpu_res["train_seconds"]
+        infer_speedup = cpu_res["infer_seconds"] / gpu_res["infer_seconds"]
+        total_min = (gpu_res["train_seconds"] + cpu_res["train_seconds"]) / 60.0
+
+        print("=======================================================")
+        print("   CICIDS2017 DeepResIDSNet BENCHMARK (GPU vs. CPU)    ")
+        print("=======================================================")
+        print(f"  Model Size     : {gpu_res['params']:,} parameters")
+        print(f"  GPU Training   : {gpu_res['train_seconds']:.2f} s | Accuracy: {gpu_res['accuracy']:.2f}%")
+        print(f"  CPU Training   : {cpu_res['train_seconds']:.2f} s | Accuracy: {cpu_res['accuracy']:.2f}%")
+        print(f"  Total Run Time : {total_min:.2f} minutes")
+        print(f"  Train Speedup  : {train_speedup:.2f}x faster on GPU")
+        print(f"  Infer Speedup  : {infer_speedup:.2f}x faster on GPU")
+        print("=======================================================")
+
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        model_path = MODEL_DIR / "ids_cicids_deep_gpu.pth"
+        torch.save(gpu_res["model"].state_dict(), model_path)
+        print(f"[INFO] Saved trained GPU model to {model_path}")
+
+        save_chart(gpu_res, cpu_res, DOCS_DIR / "cicids2017_deep_benchmark.png")
+
+
+if __name__ == "__main__":
+    main()

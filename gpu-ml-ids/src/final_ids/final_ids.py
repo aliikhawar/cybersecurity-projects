@@ -127,3 +127,52 @@ def prepare_datasets(data_dir: Path):
         torch.from_numpy(X_test),
         torch.from_numpy(y_test),
     )
+
+
+
+class ResidualBlock(nn.module):
+    """A single residual block for the deep residual neural network."""
+    def __init__(self, width: int, dropout: float = 0.2):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Linear(width, width),
+            nn.BatchNorm1d(width),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(width, width),
+            nn.BatchNorm1d(width),
+        )
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(x + self.block(x))  # skip connection adds input x to the block output   
+
+
+
+class DeepResIDSNet(nn.Module):
+    """~1.2M-parameter Deep Residual Network for 7-class CICIDS2017 intrusion detection."""
+
+    def __init__(self, input_dim: int, num_classes: int, width: int = 512):
+        super().__init__()
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_dim, width),
+            nn.BatchNorm1d(width),
+            nn.GELU(),
+        )
+        self.res1 = ResidualBlock(width, dropout=0.2)
+        self.res2 = ResidualBlock(width, dropout=0.2)
+        self.head = nn.Sequential(
+            nn.Linear(width, 256),
+            nn.BatchNorm1d(256),
+            nn.GELU(),
+            nn.Dropout(0.15),
+            nn.Linear(256, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.input_proj(x)
+        h = self.res1(h)
+        h = self.res2(h)
+        return self.head(h)
+
+    

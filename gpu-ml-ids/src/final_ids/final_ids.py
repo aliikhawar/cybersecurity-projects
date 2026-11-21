@@ -12,6 +12,8 @@ import numpy as np  # for numerical calculations
 import pandas as pd # for loading organizing and analyzing datasets
 import torch # for deep learning and GPU acceleration
 import torch.nn as nn # for building neural networks. it is a pytorch module containing all the building blocks for neural networks
+from sklearn.model_selection import train_test_split  # splits data into train and test sets
+from sklearn.preprocessing import StandardScaler  # normalizes features to mean=0, std=1
 
 
 # Listing folder paths from src/final_ids/final_ids.py to gpu-ml-ids/
@@ -94,3 +96,34 @@ def load_csv_chunks(data_dir: Path):
     return X_chunks, y_chunks
 
 
+def prepare_datasets(data_dir: Path):
+    """Combine cleaned CSV chunks, run stratified 80/20 split, scale, and return PyTorch tensors."""
+    X_chunks, y_chunks = load_csv_chunks(data_dir)
+
+    # Stack all 8 daily chunks into one contiguous float32 array
+    X_all = np.vstack(X_chunks)
+    y_all = np.concatenate(y_chunks)
+    del X_chunks, y_chunks
+    gc.collect()
+
+    print(f"[INFO] Combined cleaned shape: {X_all.shape} (~{X_all.nbytes / 1e6:.0f} MB in float32)")
+
+    # Stratified 80/20 split keeps rare attack ratios identical in train and test
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_all, y_all, test_size=0.20, random_state=SEED, stratify=y_all
+    )
+    del X_all, y_all
+    gc.collect()
+
+    # Fit scaler ONLY on training data to prevent data leakage into the test set
+    scaler = StandardScaler(copy=False)
+    X_train = scaler.fit_transform(X_train).astype(np.float32, copy=False)
+    X_test = scaler.transform(X_test).astype(np.float32, copy=False)
+
+    print(f"[INFO] Split ready -> Train: {X_train.shape} | Test: {X_test.shape}\n")
+    return (
+        torch.from_numpy(X_train),
+        torch.from_numpy(y_train),
+        torch.from_numpy(X_test),
+        torch.from_numpy(y_test),
+    )

@@ -50,7 +50,7 @@ def map_cicids_label(raw_label: str) -> int :
     if "infiltration" in lbl:
         return CLASS_TO_IDX["Infiltration"]
     return CLASS_TO_IDX["BENIGN"]  # default to BENIGN if label is unrecognized
-        return CLASS_TO_IDX["Dos/DDoS"]
+        
 
 if __name__ == "__main__":
     # Example usage of the map_cicids_label function
@@ -92,3 +92,5 @@ def load_csv_chunks(data_dir: Path):
         gc.collect()
 
     return X_chunks, y_chunks
+
+

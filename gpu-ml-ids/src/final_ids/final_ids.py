@@ -1,43 +1,42 @@
 """
-                                                  GPU-Accelerated Deep Residual Intrusion Detection System (CICIDS2017)
-
-                                                                      src/final_ids/final_ids.py
-
+GPU-Accelerated Deep Residual Intrusion Detection System (CICIDS2017)
+src/final_ids/final_ids.py
 """
 
-from pathlib import Path    # for file and folder locations
+from pathlib import Path  # for file and folder locations
 import gc  # memory management
 import time  # measuring time
 import numpy as np  # for numerical calculations
-import pandas as pd # for loading organizing and analyzing datasets
-import torch # for deep learning and GPU acceleration
-import torch.nn as nn # for building neural networks. it is a pytorch module containing all the building blocks for neural networks
+import pandas as pd  # for loading, organizing, and analyzing datasets
+import torch  # for deep learning and GPU acceleration
+import torch.nn as nn  # PyTorch module containing building blocks for neural networks
 from sklearn.model_selection import train_test_split  # splits data into train and test sets
 from sklearn.preprocessing import StandardScaler  # normalizes features to mean=0, std=1
 import matplotlib.pyplot as plt  # for generating GPU vs CPU speedup charts
 
 
 # Listing folder paths from src/final_ids/final_ids.py to gpu-ml-ids/
+PROJECT_DIR = Path(__file__).resolve().parents[2]  # project directory
+CICIDS_DIR = PROJECT_DIR / "data" / "cicids2017"  # CICIDS2017 dataset directory
+MODEL_DIR = PROJECT_DIR / "models"  # models directory
+DOCS_DIR = PROJECT_DIR / "docs"  # documentation directory
 
-PROJECT_DIR = Path(__file__).resolve().parents[2] # project directory
-CICIDS_DIR = PROJECT_DIR / "data" / "CICIDS2017" # CICIDS2017 dataset directory
-MODEL_DIR = PROJECT_DIR / "models" # models directory
-DOCS_DIR = PROJECT_DIR / "docs" # documentation directory
+# Training hyperparameters controlling how DeepResIDSNet learns from CICIDS2017
+BATCH_SIZE = 4096  # number of samples the model processes in parallel at once
+EPOCHS = 12  # number of times the model goes through the entire training dataset
+LEARNING_RATE = 1e-3  # step size when adjusting internal parameters (0.001)
+SEED = 42  # random seed to ensure reproducible results
 
-# Training hyperparameters which control how Deep Residual Neural Networks learn from the CICIDS2017 dataset.
-BATCH_SIZE = 4096 # number of samples the model processes sequentially 
-EPOCHS = 12 # number to times the model goes through the entire training dataset
-LEARNING_RATE = 1e-3 # controls the step the model takes when adjusting internal parameters during training. This number equals to 0.001
-SEED = 42 # A random number to insert in parameters to ensure reproducibility of results.
+CLASS_NAMES = [
+    "BENIGN", "Botnet", "BruteForce", "DoS/DDoS",
+    "Infiltration", "PortScan", "Web Attack",
+]
+CLASS_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}  # mapping class names to indices
 
 
-CLASS_NAMES = [ "BENIGN", "Botnet" , "DoS/DDoS" , "Infiltration", "PortScan", "Web Attack" ] # class names for the CICIDS2017 dataset
-
-CLASS_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)} # mapping class names to indices
-
-def map_cicids_label(raw_label: str) -> int :
-    """" Convert CICIDS2017 raw labels to integer indices. """
-    lbl = str(raw_label).strip().lower() # convert the raw label to lowercase and remove whitespace
+def map_cicids_label(raw_label: str) -> int:
+    """Convert CICIDS2017 raw labels to integer indices (0-6)."""
+    lbl = str(raw_label).strip().lower()  # lowercase and remove whitespace
     if lbl == "benign":
         return CLASS_TO_IDX["BENIGN"]
     if "dos" in lbl or "ddos" in lbl or "heartbleed" in lbl:
@@ -45,20 +44,15 @@ def map_cicids_label(raw_label: str) -> int :
     if "portscan" in lbl:
         return CLASS_TO_IDX["PortScan"]
     if "patator" in lbl:
-        return CLASS_TO_IDX["BruteFroce"]
+        return CLASS_TO_IDX["BruteForce"]
     if "web attack" in lbl:
         return CLASS_TO_IDX["Web Attack"]
     if "bot" in lbl:
         return CLASS_TO_IDX["Botnet"]
     if "infiltration" in lbl:
         return CLASS_TO_IDX["Infiltration"]
-    return CLASS_TO_IDX["BENIGN"]  # default to BENIGN if label is unrecognized
-        
+    return CLASS_TO_IDX["DoS/DDoS"]
 
-if __name__ == "__main__":
-    # Example usage of the map_cicids_label function
-    print(f"CUDA ready: {torch.cuda.is_available()} | Dataset folder exists: {CICIDS_DIR.exists()}")
-    print("Sample label check -> 'DDoS' maps to class ID:", map_cicids_label("DDoS"))
 
 def load_csv_chunks(data_dir: Path):
     """Stream-load all CICIDS2017 CSVs into clean, compact float32 NumPy chunks."""
@@ -130,9 +124,9 @@ def prepare_datasets(data_dir: Path):
     )
 
 
-
-class ResidualBlock(nn.module):
+class ResidualBlock(nn.Module):
     """A single residual block for the deep residual neural network."""
+
     def __init__(self, width: int, dropout: float = 0.2):
         super().__init__()
         self.block = nn.Sequential(
@@ -146,8 +140,7 @@ class ResidualBlock(nn.module):
         self.act = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(x + self.block(x))  # skip connection adds input x to the block output   
-
+        return self.act(x + self.block(x))  # skip connection adds input x to the block output
 
 
 class DeepResIDSNet(nn.Module):
@@ -175,7 +168,6 @@ class DeepResIDSNet(nn.Module):
         h = self.res1(h)
         h = self.res2(h)
         return self.head(h)
-
 
 
 def sync(device: torch.device):
@@ -288,6 +280,7 @@ def train_and_benchmark(
         "throughput": throughput,
         "accuracy": overall_acc,
     }
+
 
 def save_chart(gpu_res: dict, cpu_res: dict, out_path: Path):
     """Save a side-by-side GPU vs. CPU training time and inference throughput chart."""
